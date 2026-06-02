@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui::{
     Anchor, Animation, AnimationExt as _, AnyElement, App, Bounds, Div, Edges, ElementId,
-    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString,
-    Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, Role, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
     prelude::FluentBuilder as _, px,
 };
 use rust_i18n::t;
@@ -40,6 +40,7 @@ impl TabIndicatorBounds {
 pub struct TabBar {
     id: ElementId,
     base: Stateful<Div>,
+    aria_label: Option<SharedString>,
     style: StyleRefinement,
     scroll_handle: Option<ScrollHandle>,
     prefix: Option<AnyElement>,
@@ -60,6 +61,7 @@ impl TabBar {
         Self {
             id: id.clone(),
             base: div().id(id).px(px(-1.)),
+            aria_label: None,
             style: StyleRefinement::default(),
             children: SmallVec::new(),
             scroll_handle: None,
@@ -72,6 +74,12 @@ impl TabBar {
             on_click: None,
             menu: false,
         }
+    }
+
+    /// Set the accessible label for the tab list.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
     }
 
     /// Set the Tab variant, all children will inherit the variant.
@@ -403,11 +411,14 @@ impl RenderOnce for TabBar {
 
         let has_suffix_or_menu = self.suffix.is_some() || self.menu;
         let mut item_metas: Vec<(Option<SharedString>, Option<Icon>, bool)> = Vec::new();
+        let tab_count = self.children.len();
         let selected_index = self.selected_index;
         let on_click = self.on_click.clone();
 
         self.base
             .group("tab-bar")
+            .role(Role::TabList)
+            .when_some(self.aria_label, |this, label| this.aria_label(label))
             .relative()
             .flex()
             .items_center()
@@ -457,6 +468,7 @@ impl RenderOnce for TabBar {
                             let tab_bar_prefix = child.tab_bar_prefix.unwrap_or(true);
                             let mut tab = child
                                 .ix(ix)
+                                .tab_count(tab_count)
                                 .tab_bar_prefix(tab_bar_prefix)
                                 .with_variant(self.variant)
                                 .with_size(self.size);
