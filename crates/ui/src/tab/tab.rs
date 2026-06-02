@@ -5,7 +5,7 @@ use crate::{ActiveTheme, Icon, IconName, Selectable, Sizable, Size, StyledExt, h
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Animation, AnimationExt as _, AnyElement, App, Background, ClickEvent, Div, Edges, ElementId,
-    Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce,
+    Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce, Role,
     SharedString, StatefulInteractiveElement, Styled, Window, div, px, relative,
 };
 
@@ -395,9 +395,11 @@ pub struct Tab {
     ix: usize,
     base: Div,
     pub(super) label: Option<SharedString>,
+    aria_label: Option<SharedString>,
     pub(super) icon: Option<Icon>,
     prefix: Option<AnyElement>,
     pub(super) tab_bar_prefix: Option<bool>,
+    tab_count: Option<usize>,
     suffix: Option<AnyElement>,
     children: Vec<AnyElement>,
     variant: TabVariant,
@@ -449,8 +451,10 @@ impl Default for Tab {
             ix: 0,
             base: div(),
             label: None,
+            aria_label: None,
             icon: None,
             tab_bar_prefix: None,
+            tab_count: None,
             children: Vec::new(),
             disabled: false,
             selected: false,
@@ -475,6 +479,16 @@ impl Tab {
     /// Set label for the tab.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible label for the tab.
+    ///
+    /// Text tabs derive their accessible name from [`Tab::label`] by default.
+    /// Use this for icon-only tabs or tabs whose visible content needs a more
+    /// specific assistive-technology name.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -550,6 +564,12 @@ impl Tab {
     /// Set if the tab bar has a prefix.
     pub(crate) fn tab_bar_prefix(mut self, tab_bar_prefix: bool) -> Self {
         self.tab_bar_prefix = Some(tab_bar_prefix);
+        self
+    }
+
+    /// Set the number of tabs in the owning tab list.
+    pub(crate) fn tab_count(mut self, tab_count: usize) -> Self {
+        self.tab_count = Some(tab_count);
         self
     }
 }
@@ -631,6 +651,7 @@ impl RenderOnce for Tab {
             (tab_style.inner_bg, hover_style.inner_bg)
         };
         let inner_shadow = tab_style.shadow && !segmented_indicator_active;
+        let accessible_label = self.aria_label.clone().or_else(|| self.label.clone());
 
         // When a sliding indicator is active and ready, it alone represents the
         // selected state. Suppress the selected tab's own active background/border
@@ -714,6 +735,13 @@ impl RenderOnce for Tab {
 
         self.base
             .id(self.ix)
+            .role(Role::Tab)
+            .when_some(accessible_label, |this, label| this.aria_label(label))
+            .aria_selected(self.selected)
+            .aria_position_in_set(self.ix + 1)
+            .when_some(self.tab_count, |this, tab_count| {
+                this.aria_size_of_set(tab_count)
+            })
             .relative()
             .flex()
             .flex_wrap()

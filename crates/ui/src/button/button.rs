@@ -608,6 +608,8 @@ impl RenderOnce for Button {
                 h_flex()
                     .id("label")
                     .size_full()
+                    .min_w_0()
+                    .overflow_hidden()
                     .items_center()
                     .justify_center()
                     .button_text_size(self.size)
@@ -624,7 +626,15 @@ impl RenderOnce for Button {
                         )
                     })
                     .when_some(self.label, |this, label| {
-                        this.child(div().flex_none().line_height(relative(1.)).child(label))
+                        this.child(
+                            div()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .truncate()
+                                .line_height(relative(1.2))
+                                .child(label),
+                        )
                     })
                     .children(self.children)
                     .when(self.dropdown_caret, |this| {
