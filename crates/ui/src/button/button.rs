@@ -10,7 +10,8 @@ use crate::{
 use gpui::{
     AnyElement, App, Background, ClickEvent, Corners, Div, Edges, ElementId, Hsla,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce,
-    SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+    Role, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    div,
     prelude::FluentBuilder as _, px, relative, transparent_white,
 };
 
@@ -187,6 +188,7 @@ pub struct Button {
     style: StyleRefinement,
     icon: Option<ButtonIcon>,
     label: Option<SharedString>,
+    aria_label: Option<SharedString>,
     children: Vec<AnyElement>,
     disabled: bool,
     pub(crate) selected: bool,
@@ -230,6 +232,7 @@ impl Button {
             style: StyleRefinement::default(),
             icon: None,
             label: None,
+            aria_label: None,
             disabled: false,
             selected: false,
             variant: ButtonVariant::default(),
@@ -284,6 +287,16 @@ impl Button {
     /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible label of the button.
+    ///
+    /// Text buttons derive their accessible name from [`Button::label`] by
+    /// default. Use this for icon-only buttons or controls whose visible label
+    /// needs a more specific assistive-technology name.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -440,6 +453,13 @@ impl RenderOnce for Button {
         let clickable = self.clickable();
         let is_disabled = self.disabled;
         let hoverable = self.hoverable();
+        let accessible_label = self
+            .aria_label
+            .clone()
+            .or_else(|| self.label.clone())
+            .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()));
+        let on_click = self.on_click.clone();
+        let on_hover = self.on_hover.clone();
         let normal_style = style.normal(self.outline, cx);
         let icon_size = match self.size {
             Size::Size(v) => Size::Size(v * 0.75),
@@ -461,7 +481,14 @@ impl RenderOnce for Button {
         };
 
         self.base
-            .when(!self.disabled, |this| {
+            .role(if self.variant.is_link() {
+                Role::Link
+            } else {
+                Role::Button
+            })
+            .when_some(accessible_label, |this, label| this.aria_label(label))
+            .aria_selected(self.selected)
+            .when(!self.disabled && !self.loading, |this| {
                 this.track_focus(
                     &focus_handle
                         .tab_index(self.tab_index)
@@ -567,19 +594,12 @@ impl RenderOnce for Button {
                 // Pressing a button must not start the window-level text selection.
                 crate::global_state::GlobalState::suppress_text_selection(cx);
             })
-            .when_some(self.on_click, |this, on_click| {
+            .when_some(on_click.filter(|_| clickable), |this, on_click| {
                 this.on_click(move |event, window, cx| {
-                    // Stop handle any click event when disabled.
-                    // To avoid handle dropdown menu open when button is disabled.
-                    if !clickable {
-                        cx.stop_propagation();
-                        return;
-                    }
-
                     on_click(event, window, cx);
                 })
             })
-            .when_some(self.on_hover.filter(|_| hoverable), |this, on_hover| {
+            .when_some(on_hover.filter(|_| hoverable), |this, on_hover| {
                 this.on_hover(move |hovered, window, cx| {
                     on_hover(hovered, window, cx);
                 })
@@ -1148,6 +1168,7 @@ mod tests {
             .outline()
             .large()
             .tooltip("Click to save")
+            .aria_label("Save changes")
             .compact()
             .loading(false)
             .disabled(false)
@@ -1159,6 +1180,7 @@ mod tests {
             .on_click(|_, _, _| {});
 
         assert_eq!(button.label, Some("Save Changes".into()));
+        assert_eq!(button.aria_label, Some("Save changes".into()));
         assert_eq!(button.variant, ButtonVariant::Primary);
         assert!(button.outline);
         assert_eq!(button.size, Size::Large);
