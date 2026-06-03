@@ -3,8 +3,8 @@ use crate::{
     text::Text, tooltip::ComponentTooltip,
 };
 use gpui::{
-    Animation, AnimationExt as _, App, ElementId, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement as _, RenderOnce, Role, SharedString,
+    AccessibleAction, Animation, AnimationExt as _, App, ElementId, Hsla, InteractiveElement,
+    IntoElement, MouseButton, ParentElement as _, RenderOnce, Role, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, Toggled, Window, div,
     prelude::FluentBuilder as _, px,
 };
@@ -231,15 +231,24 @@ impl RenderOnce for Switch {
                         .map(|c| c.clone())
                         .filter(|_| !self.disabled),
                     |this, on_click| {
-                        let toggle_state = toggle_state.clone();
+                        let toggle_state_mouse = toggle_state.clone();
+                        let toggle_state_a11y = toggle_state.clone();
+                        let on_a11y_click = on_click.clone();
                         this.on_mouse_down(MouseButton::Left, |_, window, _| {
                             window.prevent_default();
                         })
                         .on_click(move |_, window, cx| {
                             cx.stop_propagation();
-                            _ = toggle_state.update(cx, |this, _| *this = checked);
+                            _ = toggle_state_mouse.update(cx, |this, _| *this = checked);
                             on_click(&!checked, window, cx);
                         })
+                        .on_a11y_action(
+                            AccessibleAction::Click,
+                            move |_, window, cx| {
+                                _ = toggle_state_a11y.update(cx, |this, _| *this = checked);
+                                on_a11y_click(&!checked, window, cx);
+                            },
+                        )
                     },
                 )
                 .map(|this| self.tooltip.apply(this)),

@@ -8,10 +8,10 @@ use crate::{
     tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui::{
-    AnyElement, App, ClickEvent, Corners, Div, Edges, ElementId, Hsla, InteractiveElement,
-    Interactivity, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce, Role, SharedString,
-    Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder as _, px, relative, transparent_white,
+    AccessibleAction, AnyElement, App, ClickEvent, Corners, Div, Edges, ElementId, Hsla,
+    InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Pixels, RenderOnce,
+    Role, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    div, prelude::FluentBuilder as _, px, relative, transparent_white,
 };
 
 #[derive(Default, Clone, Copy)]
@@ -594,8 +594,13 @@ impl RenderOnce for Button {
                 crate::global_state::GlobalState::suppress_text_selection(cx);
             })
             .when_some(on_click.filter(|_| clickable), |this, on_click| {
+                let on_a11y_click = on_click.clone();
+
                 this.on_click(move |event, window, cx| {
                     on_click(event, window, cx);
+                })
+                .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                    on_a11y_click(&ClickEvent::default(), window, cx);
                 })
             })
             .when_some(on_hover.filter(|_| hoverable), |this, on_hover| {
