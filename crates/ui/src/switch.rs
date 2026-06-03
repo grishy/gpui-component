@@ -169,6 +169,13 @@ impl RenderOnce for Switch {
                 .when(self.label_side.is_left(), |this| this.flex_row_reverse())
                 .rounded(cx.theme().radius)
                 .focus_ring(is_focused, px(2.), window, cx)
+                .when(on_click.is_some(), |this| {
+                    if self.disabled {
+                        this.cursor_not_allowed()
+                    } else {
+                        this.cursor_pointer()
+                    }
+                })
                 .child(
                     // Switch Bar
                     div()
