@@ -123,6 +123,16 @@ pub trait ListDelegate: Sized + 'static {
         cx: &mut Context<ListState<Self>>,
     );
 
+    /// Return the cursor index that should be restored after a search refresh.
+    ///
+    /// Plain lists do not have committed selection state, so they keep the
+    /// default first-row behavior. Components such as Select can override this
+    /// to keep keyboard focus aligned with the committed item after filtering
+    /// and clearing the query.
+    fn preferred_selected_index(&self, cx: &App) -> Option<IndexPath> {
+        None
+    }
+
     /// Set the index of the item that has been right clicked.
     fn set_right_clicked_index(
         &mut self,

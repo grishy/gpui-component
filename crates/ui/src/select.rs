@@ -1,8 +1,8 @@
 use gpui::{
     AnyElement, App, ClickEvent, Context, DismissEvent, Edges, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, Length, ParentElement,
-    Render, RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window,
-    anchored, deferred, div, prelude::FluentBuilder, px, rems,
+    Render, RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, anchored, deferred, div, prelude::FluentBuilder, px, rems,
 };
 use rust_i18n::t;
 
@@ -173,15 +173,12 @@ where
                         let new_selection = weak_confirm.update(cx, |this, cx| {
                             this.state.selection = selection;
 
-                            let final_value = this
-                                .state
-                                .selection
-                                .first()
-                                .map(|(_, i)| i.value().clone());
+                            let final_value =
+                                this.state.selection.first().map(|(_, i)| i.value().clone());
 
                             cx.emit(SelectEvent::Confirm(final_value));
                             cx.notify();
-                            this.set_open(false, cx);
+                            this.set_open(false, window, cx);
                             this.focus(window, cx);
 
                             this.state.selection.clone()
@@ -207,14 +204,12 @@ where
                     move |list_state, window, cx| {
                         let committed_ix = weak_cancel
                             .upgrade()
-                            .and_then(|e| {
-                                e.read(cx).state.selection.first().map(|(ix, _)| *ix)
-                            });
+                            .and_then(|e| e.read(cx).state.selection.first().map(|(ix, _)| *ix));
 
                         list_state.set_selected_index(committed_ix, window, cx);
 
                         _ = weak_cancel.update(cx, |this, cx| {
-                            this.set_open(false, cx);
+                            this.set_open(false, window, cx);
                             this.focus(window, cx);
                         });
                     }
@@ -339,13 +334,13 @@ where
             });
         }
 
-        self.set_open(false, cx);
+        self.set_open(false, window, cx);
         cx.notify();
     }
 
     fn up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
         if !self.state.open {
-            self.set_open(true, cx);
+            self.set_open(true, window, cx);
         }
 
         self.state.list.focus_handle(cx).focus(window, cx);
@@ -354,7 +349,7 @@ where
 
     fn down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
         if !self.state.open {
-            self.set_open(true, cx);
+            self.set_open(true, window, cx);
         }
 
         self.state.list.focus_handle(cx).focus(window, cx);
@@ -365,7 +360,7 @@ where
         cx.propagate();
 
         if !self.state.open {
-            self.set_open(true, cx);
+            self.set_open(true, window, cx);
             cx.notify();
         }
 
@@ -375,7 +370,7 @@ where
     fn toggle_menu(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
 
-        self.set_open(!self.state.open, cx);
+        self.set_open(!self.state.open, window, cx);
 
         if self.state.open {
             self.state.list.focus_handle(cx).focus(window, cx);
@@ -391,21 +386,44 @@ where
         }
 
         cx.stop_propagation();
-        self.set_open(false, cx);
+        self.set_open(false, window, cx);
         self.focus(window, cx);
         cx.notify();
     }
 
-    fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+    fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.state.open = open;
 
         if self.state.open {
             GlobalState::global_mut(cx).register_deferred_popover(&self.state.focus_handle)
         } else {
+            if self.searchable {
+                let list = self.state.list.clone();
+                cx.defer_in(window, move |_, window, cx| {
+                    list.update(cx, |list, cx| {
+                        list.set_query("", window, cx);
+                    });
+                });
+            }
             GlobalState::global_mut(cx).unregister_deferred_popover(&self.state.focus_handle)
         }
 
         cx.notify();
+    }
+
+    fn accessible_title(&self) -> SharedString {
+        if let Some((_, item)) = self.state.selection.first() {
+            if let Some(prefix) = &self.title_prefix {
+                return format!("{}{}", prefix, item.title()).into();
+            }
+
+            return item.title();
+        }
+
+        self.state
+            .placeholder
+            .clone()
+            .unwrap_or_else(|| t!("Select.placeholder").into())
     }
 
     fn clean(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -422,28 +440,16 @@ where
                 .unwrap_or_else(|| t!("Select.placeholder").into()),
         );
 
-        let Some(selected_index) = self.selected_index(cx) else {
+        let Some((_, selected_item)) = self.state.selection.first() else {
             return default_title;
         };
 
-        let Some(title) = self
-            .state
-            .list
-            .read(cx)
-            .delegate()
-            .delegate
-            .item(selected_index)
-            .map(|item| {
-                if let Some(el) = item.display_title() {
-                    el
-                } else if let Some(prefix) = self.title_prefix.as_ref() {
-                    format!("{}{}", prefix, item.title()).into_any_element()
-                } else {
-                    item.title().into_any_element()
-                }
-            })
-        else {
-            return default_title;
+        let title = if let Some(el) = selected_item.display_title() {
+            el
+        } else if let Some(prefix) = self.title_prefix.as_ref() {
+            format!("{}{}", prefix, selected_item.title()).into_any_element()
+        } else {
+            selected_item.title().into_any_element()
         };
 
         div()
@@ -462,11 +468,12 @@ where
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let searchable = self.searchable;
         let is_focused = self.state.focus_handle.is_focused(window);
-        let show_clean = self.state.cleanable && self.selected_index(cx).is_some();
+        let show_clean = self.state.cleanable && !self.state.selection.is_empty();
         let bounds = self.state.bounds;
         let allow_open = !(self.state.open || self.state.disabled);
         let outline_visible = self.state.open || (is_focused && !self.state.disabled);
         let popup_radius = cx.theme().radius.min(px(8.));
+        let accessible_label = self.accessible_title();
 
         let (bg, fg) = input_style(self.state.disabled, cx);
 
@@ -481,6 +488,9 @@ where
             .child(
                 div()
                     .id("input")
+                    .role(Role::Button)
+                    .aria_label(accessible_label)
+                    .aria_expanded(self.state.open)
                     .relative()
                     .flex()
                     .items_center()
@@ -661,7 +671,9 @@ where
         mut self,
         builder: impl Fn(&mut Window, &App) -> E + 'static,
     ) -> Self {
-        self.empty = Some(Box::new(move |window, cx| builder(window, cx).into_any_element()));
+        self.empty = Some(Box::new(move |window, cx| {
+            builder(window, cx).into_any_element()
+        }));
         self
     }
 

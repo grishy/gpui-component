@@ -213,10 +213,11 @@ where
 
     /// Set the query text of the search input, this will trigger a search.
     pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let query = query.to_string();
+        let query = query.trim().to_string();
         self.query_input.update(cx, |input, cx| {
-            input.set_value(query, window, cx);
+            input.set_value(query.clone(), window, cx);
         });
+        self.search(query, window, cx);
     }
 
     /// Set a specific list item for measurement.
@@ -273,39 +274,56 @@ where
             InputEvent::Change => {
                 let text = state.read(cx).value();
                 let text = text.trim().to_string();
-                if Some(&text) == self.last_query.as_ref() {
-                    return;
-                }
-
-                self.set_searching(true, window, cx);
-                let search = self.delegate.perform_search(&text, window, cx);
-
-                if self.rows_cache.len() > 0 {
-                    self._set_selected_index(Some(IndexPath::default()), window, cx);
-                } else {
-                    self._set_selected_index(None, window, cx);
-                }
-
-                self._search_task = cx.spawn_in(window, async move |this, window| {
-                    search.await;
-
-                    _ = this.update_in(window, |this, _, _| {
-                        this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
-                        this.last_query = Some(text);
-                    });
-
-                    // Always wait 100ms to avoid flicker
-                    window
-                        .background_executor()
-                        .timer(Duration::from_millis(100))
-                        .await;
-                    _ = this.update_in(window, |this, window, cx| {
-                        this.set_searching(false, window, cx);
-                    });
-                });
+                self.search(text, window, cx);
             }
             _ => {}
         }
+    }
+
+    fn search(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        if Some(&text) == self.last_query.as_ref() {
+            return;
+        }
+
+        self.set_searching(true, window, cx);
+        let search = self.delegate.perform_search(&text, window, cx);
+
+        self._search_task = cx.spawn_in(window, async move |this, cx| {
+            search.await;
+
+            // Always wait 100ms to avoid flicker.
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+
+            cx.on_next_frame(move |window, cx| {
+                _ = this.update(cx, |this, cx| {
+                    let current_query = this.query_input.read(cx).value().trim().to_string();
+                    if current_query != text {
+                        return;
+                    }
+
+                    let sections_count = this.delegate.sections_count(cx).max(1);
+                    let has_items = (0..sections_count)
+                        .any(|section| this.delegate.items_count(section, cx) > 0);
+
+                    if has_items {
+                        let selected_index = this
+                            .delegate
+                            .preferred_selected_index(cx)
+                            .unwrap_or_else(IndexPath::default);
+                        this._set_selected_index(Some(selected_index), window, cx);
+                    } else {
+                        this._set_selected_index(None, window, cx);
+                    }
+
+                    this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+                    this.last_query = Some(text);
+                    this.set_searching(false, window, cx);
+                    cx.notify();
+                });
+            });
+        });
     }
 
     fn set_searching(&mut self, searching: bool, window: &mut Window, cx: &mut Context<Self>) {
