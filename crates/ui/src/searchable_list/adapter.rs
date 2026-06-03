@@ -5,7 +5,10 @@ use crate::{
     list::{ListDelegate, ListState},
 };
 
-use super::{delegate::{SearchableListDelegate, SearchableListItem as _}, item::SearchableListItemElement};
+use super::{
+    delegate::{SearchableListDelegate, SearchableListItem as _},
+    item::SearchableListItemElement,
+};
 
 /// Bridges a [`SearchableListDelegate`] into the [`ListDelegate`] protocol.
 ///
@@ -165,6 +168,15 @@ impl<D: SearchableListDelegate + 'static> ListDelegate for SearchableListAdapter
         _: &mut Context<ListState<Self>>,
     ) {
         self.selected_index = ix;
+    }
+
+    fn preferred_selected_index(&self, _: &App) -> Option<IndexPath> {
+        let selected_value = self
+            .selection_snapshot
+            .first()
+            .map(|(_, item)| item.value().clone())?;
+
+        self.delegate.position(&selected_value)
     }
 
     fn render_empty(
