@@ -152,6 +152,7 @@ impl RenderOnce for Toggle {
         let checked = self.checked;
         let disabled = self.disabled;
         let hoverable = !disabled && !checked;
+        let has_action_cursor = self.on_click.is_some();
         let rounding = cx.theme().radius;
 
         div()
@@ -196,6 +197,13 @@ impl RenderOnce for Toggle {
             .when(checked, |this| {
                 this.bg(cx.theme().accent)
                     .text_color(cx.theme().accent_foreground)
+            })
+            .when(has_action_cursor, |this| {
+                if disabled {
+                    this.cursor_not_allowed()
+                } else {
+                    this.cursor_pointer()
+                }
             })
             .refine_style(&self.style)
             .children(self.children)

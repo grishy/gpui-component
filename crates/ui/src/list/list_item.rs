@@ -1,12 +1,12 @@
 use crate::{ActiveTheme, Disableable, Icon, Selectable, Sizable as _, StyledExt, h_flex};
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, RenderOnce, Stateful,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+    AccessibleAction, AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement,
+    Interactivity, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
+    RenderOnce, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
     prelude::FluentBuilder as _,
 };
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum ListItemMode {
@@ -32,7 +32,7 @@ pub struct ListItem {
     secondary_selected: bool,
     confirmed: bool,
     check_icon: Option<Icon>,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_mouse_down:
         HashMap<MouseButton, Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     on_mouse_enter: Option<Box<dyn Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static>>,
@@ -105,7 +105,7 @@ impl ListItem {
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_click = Some(Box::new(handler));
+        self.on_click = Some(Rc::new(handler));
         self
     }
 
@@ -162,6 +162,14 @@ impl ParentElement for ListItem {
     }
 }
 
+impl InteractiveElement for ListItem {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.base.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for ListItem {}
+
 impl RenderOnce for ListItem {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_active = self.confirmed || self.selected || self.secondary_selected;
@@ -172,6 +180,8 @@ impl RenderOnce for ListItem {
         selected_style.corner_radii = corner_radii;
 
         let is_selectable = !(self.disabled || self.mode.is_separator());
+        let has_action_cursor = self.on_click.is_some() || !self.on_mouse_down.is_empty();
+        let clickable = is_selectable && self.on_click.is_some();
 
         self.base
             .relative()
@@ -185,25 +195,44 @@ impl RenderOnce for ListItem {
             .justify_between()
             .refine_style(&self.style)
             .when(is_selectable, |this| {
-                this.when_some(self.on_click, |this, on_click| this.on_click(on_click))
-                    .when_some(self.on_mouse_enter, |this, on_mouse_enter| {
-                        this.on_mouse_move(move |ev, window, cx| (on_mouse_enter)(ev, window, cx))
+                this.when_some(self.on_click, |this, on_click| {
+                    let on_a11y_click = on_click.clone();
+
+                    this.on_click(move |event, window, cx| {
+                        on_click(event, window, cx);
                     })
-                    .map(|this| {
-                        self.on_mouse_down
-                            .into_iter()
-                            .fold(this, |this, (button, handler)| {
-                                this.on_mouse_down(button, move |ev, window, cx| {
-                                    handler(ev, window, cx)
-                                })
+                    .on_a11y_action(
+                        AccessibleAction::Click,
+                        move |_, window, cx| {
+                            on_a11y_click(&ClickEvent::default(), window, cx);
+                        },
+                    )
+                })
+                .when_some(self.on_mouse_enter, |this, on_mouse_enter| {
+                    this.on_mouse_move(move |ev, window, cx| (on_mouse_enter)(ev, window, cx))
+                })
+                .map(|this| {
+                    self.on_mouse_down
+                        .into_iter()
+                        .fold(this, |this, (button, handler)| {
+                            this.on_mouse_down(button, move |ev, window, cx| {
+                                handler(ev, window, cx)
                             })
-                    })
-                    .when(!is_active, |this| {
-                        this.hover(|this| this.bg(cx.theme().list_hover))
-                    })
+                        })
+                })
+                .when(!is_active, |this| {
+                    this.hover(|this| this.bg(cx.theme().list_hover))
+                })
             })
+            .when(clickable, |this| this.focusable().tab_stop(true))
             .when(!is_selectable, |this| {
                 this.text_color(cx.theme().muted_foreground)
+            })
+            .when(is_selectable && has_action_cursor, |this| {
+                this.cursor_pointer()
+            })
+            .when(!is_selectable && has_action_cursor, |this| {
+                this.cursor_not_allowed()
             })
             .child(
                 h_flex()

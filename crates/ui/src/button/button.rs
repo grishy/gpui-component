@@ -459,6 +459,9 @@ impl RenderOnce for Button {
             .or_else(|| self.tooltip.as_ref().map(|(tooltip, _)| tooltip.clone()));
         let on_click = self.on_click.clone();
         let on_hover = self.on_hover.clone();
+        let has_action_cursor = self.on_click.is_some() || self.variant.is_link();
+        let action_available = !(self.disabled || self.loading) && has_action_cursor;
+        let action_unavailable = (self.disabled || self.loading) && has_action_cursor;
         let normal_style = style.normal(self.outline, cx);
         let icon_size = match self.size {
             Size::Size(v) => Size::Size(v * 0.75),
@@ -494,13 +497,13 @@ impl RenderOnce for Button {
                         .tab_stop(self.tab_stop),
                 )
             })
-            .cursor_default()
             .flex()
             .flex_shrink_0()
             .items_center()
             .justify_center()
             .cursor_default()
-            .when(self.variant.is_link(), |this| this.cursor_pointer())
+            .when(action_available, |this| this.cursor_pointer())
+            .when(action_unavailable, |this| this.cursor_not_allowed())
             .when(cx.theme().shadow && normal_style.shadow, |this| {
                 this.shadow_xs()
             })

@@ -518,8 +518,10 @@ where
                     .refine_style(&self.state.style)
                     .when(outline_visible, |this| this.focused_border(cx))
                     .when(allow_open, |this| {
-                        this.on_click(cx.listener(Self::toggle_menu))
+                        this.cursor_pointer()
+                            .on_click(cx.listener(Self::toggle_menu))
                     })
+                    .when(self.state.disabled, |this| this.cursor_not_allowed())
                     .child(
                         h_flex()
                             .id("inner")
