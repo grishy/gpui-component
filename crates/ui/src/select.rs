@@ -284,6 +284,12 @@ where
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.searchable {
+            self.state.list.update(cx, |list, cx| {
+                list.set_query("", window, cx);
+            });
+        }
+
         let selected_index = self
             .state
             .list
@@ -369,7 +375,10 @@ where
 
     fn toggle_menu(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        self.toggle_menu_state(window, cx);
+    }
 
+    fn toggle_menu_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_open(!self.state.open, window, cx);
 
         if self.state.open {
@@ -395,6 +404,11 @@ where
         self.state.open = open;
 
         if self.state.open {
+            if self.searchable {
+                self.state.list.update(cx, |list, cx| {
+                    list.set_query("", window, cx);
+                });
+            }
             GlobalState::global_mut(cx).register_deferred_popover(&self.state.focus_handle)
         } else {
             if self.searchable {
@@ -470,7 +484,7 @@ where
         let is_focused = self.state.focus_handle.is_focused(window);
         let show_clean = self.state.cleanable && !self.state.selection.is_empty();
         let bounds = self.state.bounds;
-        let allow_open = !(self.state.open || self.state.disabled);
+        let trigger_enabled = !self.state.disabled;
         let outline_visible = self.state.open || (is_focused && !self.state.disabled);
         let popup_radius = cx.theme().radius.min(px(8.));
         let accessible_label = self.accessible_title();
@@ -517,7 +531,7 @@ where
                     .input_text_size(self.state.size)
                     .refine_style(&self.state.style)
                     .when(outline_visible, |this| this.focused_border(cx))
-                    .when(allow_open, |this| {
+                    .when(trigger_enabled, |this| {
                         this.cursor_pointer()
                             .on_click(cx.listener(Self::toggle_menu))
                     })
