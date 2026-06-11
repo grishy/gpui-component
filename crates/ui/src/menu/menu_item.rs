@@ -1,7 +1,7 @@
 use crate::{h_flex, ActiveTheme, Disableable, StyledExt};
 use gpui::{
     prelude::FluentBuilder as _, AnyElement, App, ClickEvent, ElementId, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, RenderOnce, SharedString,
+    IntoElement, MouseButton, ParentElement, RenderOnce, Role, SharedString,
     StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
 };
 use smallvec::SmallVec;
@@ -13,6 +13,7 @@ pub(crate) struct MenuItemElement {
     style: StyleRefinement,
     disabled: bool,
     selected: bool,
+    aria_label: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -28,6 +29,7 @@ impl MenuItemElement {
             style: StyleRefinement::default(),
             disabled: false,
             selected: false,
+            aria_label: None,
             on_click: None,
             on_hover: None,
             children: SmallVec::new(),
@@ -37,6 +39,12 @@ impl MenuItemElement {
     /// Set ListItem as the selected item style.
     pub(crate) fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Set the accessible name (macOS AX) for the menu item.
+    pub(crate) fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -86,6 +94,10 @@ impl RenderOnce for MenuItemElement {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(self.id)
+            // Surface the item to macOS AX as a menu item with its label as the
+            // accessible name, so it can be found/asserted by text.
+            .role(Role::MenuItem)
+            .when_some(self.aria_label, |this, label| this.aria_label(label))
             .group(&self.group_name)
             .gap_x_1()
             .py_1()
