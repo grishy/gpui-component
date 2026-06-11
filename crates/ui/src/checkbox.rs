@@ -6,8 +6,8 @@ use crate::{
 };
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Div, ElementId, InteractiveElement, IntoElement,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
-    Window, div, prelude::FluentBuilder as _, px, relative, rems, svg,
+    ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement,
+    Styled, Toggled, Window, div, prelude::FluentBuilder as _, px, relative, rems, svg,
 };
 
 /// A Checkbox element.
@@ -201,6 +201,15 @@ impl RenderOnce for Checkbox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let checked = self.checked;
 
+        // Expose the checkbox to macOS AX as a CheckBox with its label as the
+        // accessible name and the checked state as a boolean value, so it can
+        // be found and asserted by label (mirrors `Switch`).
+        let accessible_label = self
+            .label
+            .as_ref()
+            .map(|label| label.get_text(cx))
+            .filter(|label| !label.is_empty());
+
         let focus_handle = window
             .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
             .read(cx)
@@ -222,6 +231,13 @@ impl RenderOnce for Checkbox {
         div().child(
             self.base
                 .id(self.id.clone())
+                .role(Role::CheckBox)
+                .aria_toggled(if checked {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+                .when_some(accessible_label, |this, label| this.aria_label(label))
                 .when(!self.disabled, |this| {
                     this.track_focus(
                         &focus_handle

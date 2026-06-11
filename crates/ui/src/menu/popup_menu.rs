@@ -1166,14 +1166,15 @@ impl PopupMenu {
                 let action = action.as_ref().map(|action| action.boxed_clone());
                 let key = self.render_key_binding(action, window, cx);
 
-                this.when(!disabled, |this| {
-                    this.on_click(
-                        cx.listener(move |this, _, window, cx| this.on_click(ix, window, cx)),
-                    )
-                })
-                .disabled(*disabled)
-                .h(item_height)
-                .gap_x_1()
+                this.aria_label(label.clone())
+                    .when(!disabled, |this| {
+                        this.on_click(
+                            cx.listener(move |this, _, window, cx| this.on_click(ix, window, cx)),
+                        )
+                    })
+                    .disabled(*disabled)
+                    .h(item_height)
+                    .gap_x_1()
                 .children(Self::render_icon(
                     has_left_icon,
                     is_left_check,
