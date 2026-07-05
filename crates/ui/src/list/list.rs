@@ -282,6 +282,13 @@ where
 
     fn search(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
         if Some(&text) == self.last_query.as_ref() {
+            // The list already shows results for this query, so any
+            // in-flight search is for a superseded query. Cancel it and
+            // clear the loading state here: the cancelled task's stale-query
+            // guard exits without reaching its own set_searching(false), so
+            // skipping this would leave the spinner stuck.
+            self._search_task = Task::ready(());
+            self.set_searching(false, window, cx);
             return;
         }
 
