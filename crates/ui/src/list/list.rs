@@ -525,10 +525,12 @@ where
         let id = SharedString::from(format!("list-item-{}", ix));
 
         let total_items = self.rows_cache.items_count();
+        let aria_label = self.delegate.item_aria_label(ix, cx);
 
         div()
             .id(id)
             .role(Role::ListItem)
+            .when_some(aria_label, |this, label| this.aria_label(label))
             .aria_position_in_set(ix.row + 1)
             .aria_size_of_set(total_items)
             .aria_selected(selected)

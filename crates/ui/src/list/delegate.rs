@@ -1,4 +1,7 @@
-use gpui::{AnyElement, App, Context, IntoElement, ParentElement as _, Styled as _, Task, Window};
+use gpui::{
+    AnyElement, App, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Task,
+    Window,
+};
 
 use crate::{
     ActiveTheme as _, Icon, IconName, IndexPath, Selectable, h_flex,
@@ -23,6 +26,11 @@ pub trait ListDelegate: Sized + 'static {
 
     /// Return the preferred cursor for the current search results.
     fn preferred_selected_index(&self, _: &App) -> Option<IndexPath> {
+        None
+    }
+
+    /// Return the accessible name for the item at the given index.
+    fn item_aria_label(&self, _: IndexPath, _: &App) -> Option<SharedString> {
         None
     }
 
