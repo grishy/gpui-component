@@ -131,7 +131,7 @@ impl RenderOnce for Switch {
             .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
-        let is_focused = focus_handle.is_focused(window);
+        let show_focus_ring = !self.disabled && focus_handle.is_focused(window);
         let toggle_state = window.use_keyed_state(self.id.clone(), cx, |_, _| checked);
 
         let checked_bg = self
@@ -183,7 +183,7 @@ impl RenderOnce for Switch {
                 .items_start()
                 .when(self.label_side.is_left(), |this| this.flex_row_reverse())
                 .rounded(cx.theme().radius * 0.5)
-                .focus_ring(is_focused, px(2.), window, cx)
+                .focus_ring(show_focus_ring, px(2.), window, cx)
                 .child(
                     // Switch Bar
                     div()
