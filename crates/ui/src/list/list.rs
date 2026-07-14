@@ -73,6 +73,7 @@ pub struct ListState<D: ListDelegate> {
     options: ListOptions,
     delegate: D,
     last_query: Option<String>,
+    active_query: Option<String>,
     scroll_handle: VirtualListScrollHandle,
     rows_cache: RowsCache,
     selected_index: Option<IndexPath>,
@@ -105,6 +106,7 @@ where
             rows_cache: RowsCache::default(),
             query_input,
             last_query: None,
+            active_query: None,
             selected_index: None,
             selectable: true,
             searchable: false,
@@ -213,10 +215,10 @@ where
 
     /// Set the query text of the search input, this will trigger a search.
     pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let query = query.to_string();
         self.query_input.update(cx, |input, cx| {
             input.set_value(query, window, cx);
         });
+        self.search(query, window, cx);
     }
 
     /// Set a specific list item for measurement.
@@ -272,45 +274,89 @@ where
         match event {
             InputEvent::Change => {
                 let text = state.read(cx).value();
-                let text = text.trim().to_string();
-                if Some(&text) == self.last_query.as_ref() {
-                    return;
-                }
-
-                self.set_searching(true, window, cx);
-                let search = self.delegate.perform_search(&text, window, cx);
-
-                if self.rows_cache.len() > 0 {
-                    self._set_selected_index(Some(IndexPath::default()), window, cx);
-                } else {
-                    self._set_selected_index(None, window, cx);
-                }
-
-                self._search_task = cx.spawn_in(window, async move |this, window| {
-                    search.await;
-
-                    _ = this.update_in(window, |this, _, _| {
-                        this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
-                        this.last_query = Some(text);
-                    });
-
-                    // Always wait 100ms to avoid flicker
-                    window
-                        .background_executor()
-                        .timer(Duration::from_millis(100))
-                        .await;
-                    _ = this.update_in(window, |this, window, cx| {
-                        this.set_searching(false, window, cx);
-                    });
-                });
+                self.search(&text, window, cx);
             }
             _ => {}
         }
     }
 
-    fn set_searching(&mut self, searching: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn search(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let query = query.trim().to_string();
+        if self.active_query.as_ref() == Some(&query) {
+            return;
+        }
+        if self.active_query.is_none() {
+            if self.last_query.as_ref() == Some(&query) {
+                return;
+            }
+        }
+
+        self.active_query = Some(query.clone());
+        self.set_search_loading(true, window, cx);
+        let search = self.delegate.perform_search(&query, window, cx);
+
+        self._search_task = cx.spawn_in(window, async move |this, window| {
+            search.await;
+
+            let is_current = this
+                .update_in(window, |this, window, cx| {
+                    let Some(active_query) = this.active_query.as_deref() else {
+                        return false;
+                    };
+                    if active_query != query {
+                        return false;
+                    }
+
+                    let live_query = this.query_input.read(cx).value();
+                    if live_query.trim() != query {
+                        return false;
+                    }
+
+                    let sections_count = this.delegate.sections_count(cx).max(1);
+                    let has_items = (0..sections_count)
+                        .any(|section| this.delegate.items_count(section, cx) > 0);
+                    if has_items {
+                        this._set_selected_index(Some(IndexPath::default()), window, cx);
+                    } else {
+                        this._set_selected_index(None, window, cx);
+                    }
+
+                    this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+                    this.last_query = Some(query.clone());
+                    true
+                })
+                .unwrap_or(false);
+            if !is_current {
+                return;
+            }
+
+            // Keep fast searches from flashing the loading indicator on and off.
+            window
+                .background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            _ = this.update_in(window, |this, window, cx| {
+                let Some(active_query) = this.active_query.as_deref() else {
+                    return;
+                };
+                if active_query != query {
+                    return;
+                }
+
+                let live_query = this.query_input.read(cx).value();
+                if live_query.trim() != query {
+                    return;
+                }
+
+                this.active_query = None;
+                this.set_search_loading(false, window, cx);
+            });
+        });
+    }
+
+    fn set_search_loading(&mut self, loading: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.query_input
-            .update(cx, |input, cx| input.set_loading(searching, window, cx));
+            .update(cx, |input, cx| input.set_loading(loading, window, cx));
     }
 
     /// Dispatch delegate's `load_more` method when the
@@ -764,5 +810,152 @@ where
             .size_full()
             .refine_style(&self.style)
             .child(self.state.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    use gpui::{App, AppContext as _, Entity, TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::list::ListItem;
+
+    #[derive(Default)]
+    struct SearchLog {
+        queries: Vec<String>,
+        results: Vec<String>,
+    }
+
+    struct SearchDelegate {
+        log: Rc<RefCell<SearchLog>>,
+    }
+
+    impl ListDelegate for SearchDelegate {
+        type Item = ListItem;
+
+        fn perform_search(
+            &mut self,
+            query: &str,
+            _: &mut Window,
+            cx: &mut Context<ListState<Self>>,
+        ) -> Task<()> {
+            let query = query.to_string();
+            self.log.borrow_mut().queries.push(query.clone());
+
+            if query == "b" {
+                let log = self.log.clone();
+                return cx.spawn(async move |_, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(500))
+                        .await;
+                    log.borrow_mut().results.push(query);
+                });
+            }
+
+            self.log.borrow_mut().results.push(query);
+            Task::ready(())
+        }
+
+        fn items_count(&self, _: usize, _: &App) -> usize {
+            1
+        }
+
+        fn render_item(
+            &mut self,
+            ix: IndexPath,
+            _: &mut Window,
+            _: &mut Context<ListState<Self>>,
+        ) -> Option<Self::Item> {
+            Some(ListItem::new(("search-result", ix.row)))
+        }
+
+        fn set_selected_index(
+            &mut self,
+            _: Option<IndexPath>,
+            _: &mut Window,
+            _: &mut Context<ListState<Self>>,
+        ) {
+        }
+    }
+
+    fn new_search_list(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<ListState<SearchDelegate>>,
+        Rc<RefCell<SearchLog>>,
+        &mut VisualTestContext,
+    ) {
+        cx.update(crate::init);
+        let log = Rc::new(RefCell::new(SearchLog::default()));
+        let window = cx.add_empty_window();
+        let state = window.update(|window, cx| {
+            let delegate = SearchDelegate { log: log.clone() };
+            cx.new(|cx| ListState::new(delegate, window, cx))
+        });
+        (state, log, window)
+    }
+
+    fn emit_query_change(state: &Entity<ListState<SearchDelegate>>, cx: &mut VisualTestContext) {
+        let input = cx.read(|cx| state.read(cx).query_input.clone());
+        cx.update(|_, cx| {
+            input.update(cx, |_, cx| cx.emit(InputEvent::Change));
+        });
+        cx.run_until_parked();
+    }
+
+    fn set_query_and_emit_change(
+        state: &Entity<ListState<SearchDelegate>>,
+        query: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| state.set_query(query, window, cx));
+        });
+        emit_query_change(state, cx);
+    }
+
+    #[gpui::test]
+    fn programmatic_query_searches_synchronously_without_duplicate_event(cx: &mut TestAppContext) {
+        let (state, log, cx) = new_search_list(cx);
+
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| state.set_query("rust", window, cx));
+        });
+        assert_eq!(log.borrow().queries, ["rust"]);
+
+        emit_query_change(&state, cx);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        assert_eq!(log.borrow().queries, ["rust"]);
+    }
+
+    #[gpui::test]
+    fn restoring_completed_query_supersedes_active_search(cx: &mut TestAppContext) {
+        let (state, log, cx) = new_search_list(cx);
+
+        set_query_and_emit_change(&state, "a", cx);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        set_query_and_emit_change(&state, "b", cx);
+        set_query_and_emit_change(&state, "a", cx);
+
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let log = log.borrow();
+        assert_eq!(log.queries, ["a", "b", "a"]);
+        assert_eq!(log.results, ["a", "a"]);
+        let (last_query, active_query) = cx.read(|cx| {
+            let state = state.read(cx);
+            (state.last_query.clone(), state.active_query.clone())
+        });
+        assert_eq!(last_query, Some("a".to_string()));
+        assert_eq!(active_query, None);
     }
 }
