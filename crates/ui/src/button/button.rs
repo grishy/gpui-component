@@ -187,6 +187,7 @@ pub struct Button {
     style: StyleRefinement,
     icon: Option<ButtonIcon>,
     label: Option<SharedString>,
+    aria_label: Option<SharedString>,
     children: Vec<AnyElement>,
     disabled: bool,
     pub(crate) selected: bool,
@@ -230,6 +231,7 @@ impl Button {
             style: StyleRefinement::default(),
             icon: None,
             label: None,
+            aria_label: None,
             disabled: false,
             selected: false,
             variant: ButtonVariant::default(),
@@ -285,6 +287,16 @@ impl Button {
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
         self
+    }
+
+    /// Set the accessible label for the Button.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    fn a11y_label(&self) -> Option<SharedString> {
+        self.aria_label.clone().or_else(|| self.label.clone())
     }
 
     /// Set the icon of the button, if the Button have no label, the button well in Icon Button mode.
@@ -459,6 +471,7 @@ impl RenderOnce for Button {
             ButtonRounded::Size(px) => px,
             ButtonRounded::None => Pixels::ZERO,
         };
+        let aria_label = self.a11y_label();
 
         self.base
             .role(if self.variant.is_link() {
@@ -466,9 +479,7 @@ impl RenderOnce for Button {
             } else {
                 Role::Button
             })
-            .when_some(self.label.as_ref(), |this, label| {
-                this.aria_label(label.clone())
-            })
+            .when_some(aria_label, |this, label| this.aria_label(label))
             .aria_selected(self.selected)
             .when(!self.disabled, |this| {
                 this.track_focus(
@@ -1153,6 +1164,7 @@ mod tests {
     fn test_button_builder(_cx: &mut gpui::TestAppContext) {
         let button = Button::new("complex-button")
             .label("Save Changes")
+            .aria_label("Save document")
             .primary()
             .outline()
             .large()
@@ -1168,6 +1180,7 @@ mod tests {
             .on_click(|_, _, _| {});
 
         assert_eq!(button.label, Some("Save Changes".into()));
+        assert_eq!(button.a11y_label(), Some("Save document".into()));
         assert_eq!(button.variant, ButtonVariant::Primary);
         assert!(button.outline);
         assert_eq!(button.size, Size::Large);
@@ -1180,6 +1193,13 @@ mod tests {
         assert!(button.tab_stop);
         assert!(!button.dropdown_caret);
         assert!(matches!(button.rounded, ButtonRounded::Medium));
+    }
+
+    #[gpui::test]
+    fn a11y_label_defaults_to_visible_label(_cx: &mut gpui::TestAppContext) {
+        let button = Button::new("save-button").label("Save Changes");
+
+        assert_eq!(button.a11y_label(), Some("Save Changes".into()));
     }
 
     #[gpui::test]
