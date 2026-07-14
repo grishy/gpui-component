@@ -21,6 +21,11 @@ pub trait ListDelegate: Sized + 'static {
         Task::ready(())
     }
 
+    /// Return the preferred cursor for the current search results.
+    fn preferred_selected_index(&self, _: &App) -> Option<IndexPath> {
+        None
+    }
+
     /// Return the number of sections in the list, default is 1.
     ///
     /// Min value is 1.

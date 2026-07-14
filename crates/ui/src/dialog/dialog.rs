@@ -639,8 +639,8 @@ impl RenderOnce for Dialog {
                                     .small()
                                     .ghost()
                                     .icon(IconName::Close)
-                                    .aria_label(t!("Close"))
-                                    .tooltip(t!("Close"))
+                                    .aria_label(t!("Dock.Close"))
+                                    .tooltip(t!("Dock.Close"))
                                     .on_click({
                                         let on_cancel = self.button_props.on_cancel.clone();
                                         let on_close = self.button_props.on_close.clone();

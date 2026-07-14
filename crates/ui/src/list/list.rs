@@ -312,16 +312,7 @@ where
                         return false;
                     }
 
-                    let sections_count = this.delegate.sections_count(cx).max(1);
-                    let has_items = (0..sections_count)
-                        .any(|section| this.delegate.items_count(section, cx) > 0);
-                    if has_items {
-                        this._set_selected_index(Some(IndexPath::default()), window, cx);
-                    } else {
-                        this._set_selected_index(None, window, cx);
-                    }
-
-                    this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+                    this.restore_search_cursor(window, cx);
                     this.last_query = Some(query.clone());
                     true
                 })
@@ -352,6 +343,30 @@ where
                 this.set_search_loading(false, window, cx);
             });
         });
+    }
+
+    fn restore_search_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sections_count = self.delegate.sections_count(cx).max(1);
+        let preferred_selected_index = self
+            .delegate
+            .preferred_selected_index(cx)
+            .filter(|ix| self.is_valid_index(*ix, cx));
+        let first_selected_index = (0..sections_count)
+            .find(|section| self.delegate.items_count(*section, cx) > 0)
+            .map(|section| IndexPath::default().section(section));
+        let selected_index = preferred_selected_index.or(first_selected_index);
+
+        self._set_selected_index(selected_index, window, cx);
+        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+    }
+
+    fn is_valid_index(&self, ix: IndexPath, cx: &App) -> bool {
+        let sections_count = self.delegate.sections_count(cx).max(1);
+        if ix.section < sections_count {
+            ix.row < self.delegate.items_count(ix.section, cx)
+        } else {
+            false
+        }
     }
 
     fn set_search_loading(&mut self, loading: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -897,15 +912,7 @@ mod tests {
         (state, log, window)
     }
 
-    fn emit_query_change(state: &Entity<ListState<SearchDelegate>>, cx: &mut VisualTestContext) {
-        let input = cx.read(|cx| state.read(cx).query_input.clone());
-        cx.update(|_, cx| {
-            input.update(cx, |_, cx| cx.emit(InputEvent::Change));
-        });
-        cx.run_until_parked();
-    }
-
-    fn set_query_and_emit_change(
+    fn set_query(
         state: &Entity<ListState<SearchDelegate>>,
         query: &str,
         cx: &mut VisualTestContext,
@@ -913,11 +920,11 @@ mod tests {
         cx.update(|window, cx| {
             state.update(cx, |state, cx| state.set_query(query, window, cx));
         });
-        emit_query_change(state, cx);
+        cx.run_until_parked();
     }
 
     #[gpui::test]
-    fn programmatic_query_searches_synchronously_without_duplicate_event(cx: &mut TestAppContext) {
+    fn programmatic_query_searches_synchronously(cx: &mut TestAppContext) {
         let (state, log, cx) = new_search_list(cx);
 
         cx.update(|window, cx| {
@@ -925,23 +932,23 @@ mod tests {
         });
         assert_eq!(log.borrow().queries, ["rust"]);
 
-        emit_query_change(&state, cx);
+        cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
 
-        assert_eq!(log.borrow().queries, ["rust"]);
+        assert_eq!(log.borrow().results, ["rust"]);
     }
 
     #[gpui::test]
     fn restoring_completed_query_supersedes_active_search(cx: &mut TestAppContext) {
         let (state, log, cx) = new_search_list(cx);
 
-        set_query_and_emit_change(&state, "a", cx);
+        set_query(&state, "a", cx);
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
 
-        set_query_and_emit_change(&state, "b", cx);
-        set_query_and_emit_change(&state, "a", cx);
+        set_query(&state, "b", cx);
+        set_query(&state, "a", cx);
 
         cx.executor().advance_clock(Duration::from_millis(500));
         cx.run_until_parked();

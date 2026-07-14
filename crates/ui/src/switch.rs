@@ -287,15 +287,9 @@ mod tests {
                 .checked(true);
             assert_eq!(checked.a11y_label(cx), Some("Explicit label".into()));
             assert_eq!(checked.a11y_toggled(), Toggled::True);
-        });
-    }
 
-    #[gpui::test]
-    fn tooltip_is_not_an_accessible_name(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            let switch = Switch::new("tooltip-only").tooltip("Visual hint");
-
-            assert_eq!(switch.a11y_label(cx), None);
+            let tooltip_only = Switch::new("tooltip-only").tooltip("Visual hint");
+            assert_eq!(tooltip_only.a11y_label(cx), None);
         });
     }
 }

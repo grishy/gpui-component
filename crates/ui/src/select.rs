@@ -1,8 +1,8 @@
 use gpui::{
     AnyElement, App, ClickEvent, Context, DismissEvent, Edges, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, Length, ParentElement,
-    Render, RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window,
-    anchored, deferred, div, prelude::FluentBuilder, px, rems,
+    Render, RenderOnce, Role, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
+    Window, anchored, deferred, div, prelude::FluentBuilder, px, rems,
 };
 use rust_i18n::t;
 
@@ -178,7 +178,7 @@ where
 
                             cx.emit(SelectEvent::Confirm(final_value));
                             cx.notify();
-                            this.set_open(false, cx);
+                            this.set_open(false, window, cx);
                             this.focus(window, cx);
 
                             this.state.selection.clone()
@@ -209,7 +209,7 @@ where
                         list_state.set_selected_index(committed_ix, window, cx);
 
                         _ = weak_cancel.update(cx, |this, cx| {
-                            this.set_open(false, cx);
+                            this.set_open(false, window, cx);
                             this.focus(window, cx);
                         });
                     }
@@ -276,14 +276,20 @@ where
 
     /// Set selected value for the select.
     ///
-    /// Looks up the position from the delegate and sets the selected index accordingly.
-    /// Passes `None` when the value is not found.
+    /// Searchable selects first clear their query so the synchronous delegate exposes its full
+    /// item set before position lookup. The selection is cleared when the value is not found.
     pub fn set_selected_value(
         &mut self,
         selected_value: &<D::Item as SearchableListItem>::Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.searchable {
+            self.state.list.update(cx, |list, cx| {
+                list.set_query("", window, cx);
+            });
+        }
+
         let selected_index = self
             .state
             .list
@@ -334,13 +340,18 @@ where
             });
         }
 
-        self.set_open(false, cx);
+        self.set_open(false, window, cx);
         cx.notify();
     }
 
     fn up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.disabled {
+            cx.propagate();
+            return;
+        }
+
         if !self.state.open {
-            self.set_open(true, cx);
+            self.set_open(true, window, cx);
         }
 
         self.state.list.focus_handle(cx).focus(window, cx);
@@ -348,8 +359,13 @@ where
     }
 
     fn down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.disabled {
+            cx.propagate();
+            return;
+        }
+
         if !self.state.open {
-            self.set_open(true, cx);
+            self.set_open(true, window, cx);
         }
 
         self.state.list.focus_handle(cx).focus(window, cx);
@@ -359,8 +375,12 @@ where
     fn enter(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         cx.propagate();
 
+        if self.state.disabled {
+            return;
+        }
+
         if !self.state.open {
-            self.set_open(true, cx);
+            self.set_open(true, window, cx);
             cx.notify();
         }
 
@@ -368,12 +388,27 @@ where
     }
 
     fn toggle_menu(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.disabled {
+            return;
+        }
+
         cx.stop_propagation();
 
-        self.set_open(!self.state.open, cx);
+        self.toggle_open(window, cx);
+    }
 
-        if self.state.open {
+    fn toggle_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.state.disabled {
+            return;
+        }
+
+        let open = !self.state.open;
+        self.set_open(open, window, cx);
+
+        if open {
             self.state.list.focus_handle(cx).focus(window, cx);
+        } else {
+            self.focus(window, cx);
         }
 
         cx.notify();
@@ -386,18 +421,44 @@ where
         }
 
         cx.stop_propagation();
-        self.set_open(false, cx);
+        self.set_open(false, window, cx);
         self.focus(window, cx);
         cx.notify();
     }
 
-    fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+    fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if open {
+            if self.state.disabled {
+                return;
+            }
+        }
+
         self.state.open = open;
 
         if self.state.open {
             GlobalState::global_mut(cx).register_deferred_popover(&self.state.focus_handle)
         } else {
             GlobalState::global_mut(cx).unregister_deferred_popover(&self.state.focus_handle)
+        }
+
+        if self.searchable {
+            if open {
+                self.state.list.update(cx, |list, cx| {
+                    list.set_query("", window, cx);
+                });
+            } else {
+                // List confirmation can close the Select while ListState is borrowed. Defer that
+                // reset, and skip it if another event has already reopened the Select.
+                cx.defer_in(window, |this, window, cx| {
+                    if this.state.open {
+                        return;
+                    }
+
+                    this.state.list.update(cx, |list, cx| {
+                        list.set_query("", window, cx);
+                    });
+                });
+            }
         }
 
         cx.notify();
@@ -409,36 +470,45 @@ where
         cx.emit(SelectEvent::Confirm(None));
     }
 
-    fn display_title(&mut self, _: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let default_title = div().text_color(cx.theme().muted_foreground).child(
-            self.state
+    fn trigger_label(&self) -> SharedString {
+        let Some((_, item)) = self.state.selection.first() else {
+            return self
+                .state
                 .placeholder
                 .clone()
-                .unwrap_or_else(|| t!("Select.placeholder").into()),
-        );
+                .unwrap_or_else(|| t!("Select.placeholder").into());
+        };
 
-        let Some(selected_index) = self.selected_index(cx) else {
+        if let Some(prefix) = self.title_prefix.as_ref() {
+            format!("{}{}", prefix, item.title()).into()
+        } else {
+            item.title()
+        }
+    }
+
+    fn show_clean(&self) -> bool {
+        if self.state.cleanable {
+            self.state.selection.first().is_some()
+        } else {
+            false
+        }
+    }
+
+    fn display_title(&self, _: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let default_title = div()
+            .text_color(cx.theme().muted_foreground)
+            .child(self.trigger_label());
+
+        let Some((_, item)) = self.state.selection.first() else {
             return default_title;
         };
 
-        let Some(title) = self
-            .state
-            .list
-            .read(cx)
-            .delegate()
-            .delegate
-            .item(selected_index)
-            .map(|item| {
-                if let Some(el) = item.display_title() {
-                    el
-                } else if let Some(prefix) = self.title_prefix.as_ref() {
-                    format!("{}{}", prefix, item.title()).into_any_element()
-                } else {
-                    item.title().into_any_element()
-                }
-            })
-        else {
-            return default_title;
+        let title = if let Some(el) = item.display_title() {
+            el
+        } else if let Some(prefix) = self.title_prefix.as_ref() {
+            format!("{}{}", prefix, item.title()).into_any_element()
+        } else {
+            item.title().into_any_element()
         };
 
         div()
@@ -457,10 +527,17 @@ where
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let searchable = self.searchable;
         let is_focused = self.state.focus_handle.is_focused(window);
-        let show_clean = self.state.cleanable && self.selected_index(cx).is_some();
+        let show_clean = self.show_clean();
+        let trigger_label = self.trigger_label();
+        let trigger_focus_handle = self.state.focus_handle.clone().tab_stop(true);
+        let disabled = self.state.disabled;
+        let enabled = !disabled;
         let bounds = self.state.bounds;
-        let allow_open = !(self.state.open || self.state.disabled);
-        let outline_visible = self.state.open || (is_focused && !self.state.disabled);
+        let outline_visible = if self.state.open {
+            true
+        } else {
+            if disabled { false } else { is_focused }
+        };
         let popup_radius = cx.theme().radius.min(px(8.));
 
         let (bg, fg) = input_style(self.state.disabled, cx);
@@ -502,7 +579,7 @@ where
                     .input_text_size(self.state.size)
                     .refine_style(&self.state.style)
                     .when(outline_visible, |this| this.focused_border(cx))
-                    .when(allow_open, |this| {
+                    .when(enabled, |this| {
                         this.on_click(cx.listener(Self::toggle_menu))
                     })
                     .child(
@@ -515,20 +592,29 @@ where
                             .child(
                                 div()
                                     .id("title")
+                                    .role(Role::Button)
+                                    .aria_label(trigger_label)
+                                    .aria_expanded(self.state.open)
                                     .w_full()
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .truncate()
+                                    .when(enabled, |this| {
+                                        this.track_focus(&trigger_focus_handle)
+                                            .on_click(cx.listener(Self::toggle_menu))
+                                    })
                                     .child(self.display_title(window, cx)),
                             )
                             .when(show_clean, |this| {
-                                this.child(clear_button(cx).map(|this| {
-                                    if self.state.disabled {
-                                        this.disabled(true)
-                                    } else {
-                                        this.on_click(cx.listener(Self::clean))
-                                    }
-                                }))
+                                this.child(clear_button(cx).aria_label(t!("Select.clear")).map(
+                                    |this| {
+                                        if self.state.disabled {
+                                            this.disabled(true)
+                                        } else {
+                                            this.on_click(cx.listener(Self::clean))
+                                        }
+                                    },
+                                ))
                             })
                             .when(!show_clean, |this| {
                                 let icon = match self.icon.clone() {
@@ -724,10 +810,10 @@ where
     <D::Item as SearchableListItem>::Value: PartialEq + Clone,
 {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let disabled = self.options.disabled;
-        let focus_handle = self.state.focus_handle(cx);
         let empty = self.empty;
         let opts = self.options;
+        let disabled = opts.disabled;
+        let enabled = !disabled;
 
         self.state.update(cx, |this, _| {
             this.state.style = opts.style;
@@ -750,13 +836,12 @@ where
         div()
             .id(self.id.clone())
             .key_context(CONTEXT)
-            .when(!disabled, |this| {
-                this.track_focus(&focus_handle.tab_stop(true))
+            .when(enabled, |this| {
+                this.on_action(window.listener_for(&self.state, SelectState::up))
+                    .on_action(window.listener_for(&self.state, SelectState::down))
+                    .on_action(window.listener_for(&self.state, SelectState::enter))
+                    .on_action(window.listener_for(&self.state, SelectState::escape))
             })
-            .on_action(window.listener_for(&self.state, SelectState::up))
-            .on_action(window.listener_for(&self.state, SelectState::down))
-            .on_action(window.listener_for(&self.state, SelectState::enter))
-            .on_action(window.listener_for(&self.state, SelectState::escape))
             .size_full()
             .child(self.state)
     }
@@ -766,13 +851,62 @@ where
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, TestAppContext};
+    use std::time::Duration;
+
+    use gpui::{AppContext as _, Entity, SharedString, TestAppContext, VisualTestContext};
 
     use crate::{
         IndexPath,
         searchable_list::SearchableVec,
         select::{SelectGroup, SelectState},
     };
+
+    fn new_searchable_select(
+        cx: &mut TestAppContext,
+        selected_index: Option<IndexPath>,
+    ) -> (
+        Entity<SelectState<SearchableVec<&'static str>>>,
+        &mut VisualTestContext,
+    ) {
+        cx.update(crate::init);
+        let cx = cx.add_empty_window();
+        let state = cx.update(|window, cx| {
+            let items = SearchableVec::new(vec!["Rust", "Go", "C++"]);
+            cx.new(|cx| SelectState::new(items, selected_index, window, cx).searchable(true))
+        });
+        (state, cx)
+    }
+
+    fn settle_search(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    fn set_query(
+        state: &Entity<SelectState<SearchableVec<&'static str>>>,
+        query: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.state.list.update(cx, |list, cx| {
+                    list.set_query(query, window, cx);
+                });
+            });
+        });
+        settle_search(cx);
+    }
+
+    fn query_value(
+        state: &Entity<SelectState<SearchableVec<&'static str>>>,
+        cx: &VisualTestContext,
+    ) -> SharedString {
+        cx.read(|cx| {
+            let input = state.read(cx).state.list.read(cx).query_input.clone();
+            input.read(cx).value()
+        })
+    }
 
     #[gpui::test]
     fn test_select_initial_selection_seeds_cursor(cx: &mut TestAppContext) {
@@ -785,7 +919,7 @@ mod tests {
             assert_eq!(
                 state.read(cx).selected_index(cx),
                 Some(IndexPath::new(1)),
-                "initial cursor should be seeded on ListState so display_title can read it",
+                "initial cursor should be seeded on ListState",
             );
             assert_eq!(state.read(cx).selected_value(), Some(&"Go"));
         });
@@ -806,5 +940,69 @@ mod tests {
             assert_eq!(state.read(cx).selected_index(cx), Some(initial));
             assert_eq!(state.read(cx).selected_value(), Some(&"Blueberry"));
         });
+    }
+
+    #[gpui::test]
+    fn searchable_select_keeps_committed_state_across_filter_selection_and_reopen(
+        cx: &mut TestAppContext,
+    ) {
+        // The trigger follows the committed value while search only moves the navigation cursor.
+        // Programmatic selection and reopening must both converge through the blank query state.
+        let (state, cx) = new_searchable_select(cx, Some(IndexPath::new(1)));
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.state.cleanable = true;
+                state.title_prefix = Some("Language: ".into());
+                state.set_open(true, window, cx);
+            });
+        });
+        settle_search(cx);
+
+        set_query(&state, "Rust", cx);
+
+        assert_eq!(
+            cx.read(|cx| state.read(cx).selected_index(cx)),
+            Some(IndexPath::new(0))
+        );
+        assert_eq!(
+            cx.read(|cx| state.read(cx).selected_value().copied()),
+            Some("Go")
+        );
+        assert_eq!(cx.read(|cx| state.read(cx).trigger_label()), "Language: Go");
+        assert!(cx.read(|cx| state.read(cx).show_clean()));
+
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_selected_value(&"C++", window, cx);
+
+                assert_eq!(state.selected_value(), Some(&"C++"));
+                assert_eq!(state.selected_index(cx), Some(IndexPath::new(2)));
+            });
+        });
+        assert_eq!(query_value(&state, cx), "");
+
+        set_query(&state, "Rust", cx);
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_open(false, window, cx);
+                state.set_open(true, window, cx);
+            });
+        });
+        settle_search(cx);
+
+        assert_eq!(query_value(&state, cx), "");
+        assert_eq!(
+            cx.read(|cx| state.read(cx).selected_value().copied()),
+            Some("C++")
+        );
+        assert_eq!(
+            cx.read(|cx| state.read(cx).trigger_label()),
+            "Language: C++"
+        );
+        assert!(cx.read(|cx| state.read(cx).show_clean()));
+        assert_eq!(
+            cx.read(|cx| state.read(cx).selected_index(cx)),
+            Some(IndexPath::new(2))
+        );
     }
 }

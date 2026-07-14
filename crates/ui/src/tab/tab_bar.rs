@@ -41,7 +41,6 @@ pub struct TabBar {
     id: ElementId,
     base: Stateful<Div>,
     style: StyleRefinement,
-    aria_label: Option<SharedString>,
     scroll_handle: Option<ScrollHandle>,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
@@ -62,7 +61,6 @@ impl TabBar {
             id: id.clone(),
             base: div().id(id).px(px(-1.)),
             style: StyleRefinement::default(),
-            aria_label: None,
             children: SmallVec::new(),
             scroll_handle: None,
             prefix: None,
@@ -74,12 +72,6 @@ impl TabBar {
             on_click: None,
             menu: false,
         }
-    }
-
-    /// Set the accessible label for the TabBar.
-    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
-        self.aria_label = Some(label.into());
-        self
     }
 
     /// Set the Tab variant, all children will inherit the variant.
@@ -425,7 +417,6 @@ impl RenderOnce for TabBar {
 
         self.base
             .role(Role::TabList)
-            .when_some(self.aria_label, |this, label| this.aria_label(label))
             .group("tab-bar")
             .relative()
             .flex()
@@ -541,17 +532,5 @@ impl RenderOnce for TabBar {
                 )
             })
             .when_some(self.suffix, |this, suffix| this.child(suffix))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[gpui::test]
-    fn test_tab_bar_accessible_name_builder(_cx: &mut gpui::TestAppContext) {
-        let tab_bar = TabBar::new("main-sections").aria_label("Main sections");
-
-        assert_eq!(tab_bar.aria_label, Some("Main sections".into()));
     }
 }

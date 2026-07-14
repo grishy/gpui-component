@@ -1193,13 +1193,12 @@ mod tests {
         assert!(button.tab_stop);
         assert!(!button.dropdown_caret);
         assert!(matches!(button.rounded, ButtonRounded::Medium));
-    }
-
-    #[gpui::test]
-    fn a11y_label_defaults_to_visible_label(_cx: &mut gpui::TestAppContext) {
-        let button = Button::new("save-button").label("Save Changes");
-
-        assert_eq!(button.a11y_label(), Some("Save Changes".into()));
+        assert_eq!(
+            Button::new("default-label")
+                .label("Save Changes")
+                .a11y_label(),
+            Some("Save Changes".into())
+        );
     }
 
     #[gpui::test]

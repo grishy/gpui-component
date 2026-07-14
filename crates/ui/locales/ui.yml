@@ -128,6 +128,12 @@ Select:
     zh-HK: "請選擇"
     zh-TW: "請選擇"
     it: Seleziona
+  clear:
+    en: "Clear selection"
+    zh-CN: "清除选择"
+    zh-HK: "清除選擇"
+    zh-TW: "清除選取"
+    it: "Cancella selezione"
 ComboBox:
   placeholder:
     en: "Please select"
