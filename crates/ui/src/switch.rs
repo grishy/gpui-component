@@ -1,11 +1,11 @@
 use crate::{
-    ActiveTheme, Disableable, Side, Sizable, Size, StyledExt, h_flex, text::Text,
+    ActiveTheme, Disableable, FocusableExt, Side, Sizable, Size, StyledExt, h_flex, text::Text,
     tooltip::ComponentTooltip,
 };
 use gpui::{
     Animation, AnimationExt as _, App, Background, ElementId, Hsla, InteractiveElement,
-    IntoElement, ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled, Window,
-    div, prelude::FluentBuilder as _, px,
+    IntoElement, ParentElement as _, RenderOnce, Role, SharedString, StatefulInteractiveElement,
+    StyleRefinement, Styled, Toggled, Window, div, prelude::FluentBuilder as _, px,
 };
 use std::{rc::Rc, time::Duration};
 
@@ -17,6 +17,7 @@ pub struct Switch {
     checked: bool,
     disabled: bool,
     label: Option<Text>,
+    aria_label: Option<SharedString>,
     label_side: Side,
     on_click: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
     size: Size,
@@ -34,6 +35,7 @@ impl Switch {
             checked: false,
             disabled: false,
             label: None,
+            aria_label: None,
             on_click: None,
             label_side: Side::Right,
             size: Size::Medium,
@@ -52,6 +54,28 @@ impl Switch {
     pub fn label(mut self, label: impl Into<Text>) -> Self {
         self.label = Some(label.into());
         self
+    }
+
+    /// Set the label announced by assistive technology.
+    ///
+    /// This overrides the visible label for accessibility naming.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    fn a11y_label(&self, cx: &App) -> Option<SharedString> {
+        self.aria_label
+            .clone()
+            .or_else(|| self.label.as_ref().map(|label| label.get_text(cx)))
+    }
+
+    fn a11y_toggled(&self) -> Toggled {
+        if self.checked {
+            Toggled::True
+        } else {
+            Toggled::False
+        }
     }
 
     /// Add a click handler for the switch.
@@ -101,6 +125,13 @@ impl RenderOnce for Switch {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let checked = self.checked;
         let on_click = self.on_click.clone();
+        let a11y_label = self.a11y_label(cx);
+        let a11y_toggled = self.a11y_toggled();
+        let focus_handle = window
+            .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let is_focused = focus_handle.is_focused(window);
         let toggle_state = window.use_keyed_state(self.id.clone(), cx, |_, _| checked);
 
         let checked_bg = self
@@ -142,13 +173,20 @@ impl RenderOnce for Switch {
         div().refine_style(&self.style).child(
             h_flex()
                 .id(self.id.clone())
+                .role(Role::Switch)
+                .aria_toggled(a11y_toggled)
+                .when_some(a11y_label, |this, label| this.aria_label(label))
+                .when(!self.disabled, |this| {
+                    this.track_focus(&focus_handle.tab_stop(true))
+                })
                 .gap_2()
                 .items_start()
                 .when(self.label_side.is_left(), |this| this.flex_row_reverse())
+                .rounded(cx.theme().radius * 0.5)
+                .focus_ring(is_focused, px(2.), window, cx)
                 .child(
                     // Switch Bar
                     div()
-                        .id(self.id.clone())
                         .w(bg_width)
                         .h(bg_height)
                         .rounded(radius)
@@ -157,7 +195,6 @@ impl RenderOnce for Switch {
                         .border(inset)
                         .border_color(cx.theme().transparent)
                         .bg(bg)
-                        .map(|this| self.tooltip.apply(this))
                         .child(
                             // Switch Toggle
                             div()
@@ -209,6 +246,10 @@ impl RenderOnce for Switch {
                         },
                     ))
                 })
+                .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+                    // Avoid focus on mouse down.
+                    window.prevent_default();
+                })
                 .when_some(
                     on_click
                         .as_ref()
@@ -216,13 +257,45 @@ impl RenderOnce for Switch {
                         .filter(|_| !self.disabled),
                     |this, on_click| {
                         let toggle_state = toggle_state.clone();
-                        this.on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                        this.on_click(move |_, window, cx| {
                             cx.stop_propagation();
                             _ = toggle_state.update(cx, |this, _| *this = checked);
                             on_click(&!checked, window, cx);
                         })
                     },
-                ),
+                )
+                .map(|this| self.tooltip.apply(this)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::Toggled;
+
+    #[gpui::test]
+    fn a11y_name_and_state_follow_switch_configuration(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let unchecked = Switch::new("visible-label").label("Visible label");
+            assert_eq!(unchecked.a11y_label(cx), Some("Visible label".into()));
+            assert_eq!(unchecked.a11y_toggled(), Toggled::False);
+
+            let checked = Switch::new("explicit-label")
+                .label("Visible label")
+                .aria_label("Explicit label")
+                .checked(true);
+            assert_eq!(checked.a11y_label(cx), Some("Explicit label".into()));
+            assert_eq!(checked.a11y_toggled(), Toggled::True);
+        });
+    }
+
+    #[gpui::test]
+    fn tooltip_is_not_an_accessible_name(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let switch = Switch::new("tooltip-only").tooltip("Visual hint");
+
+            assert_eq!(switch.a11y_label(cx), None);
+        });
     }
 }
