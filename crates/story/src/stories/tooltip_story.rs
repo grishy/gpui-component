@@ -5,7 +5,7 @@ use gpui::{
 };
 
 use gpui_component::{
-    IconName,
+    IconName, Placement,
     button::{Button, ButtonVariant, ButtonVariants, Toggle},
     checkbox::Checkbox,
     clipboard::Clipboard,
@@ -93,6 +93,12 @@ impl Render for TooltipStory {
                         Button::new("btn3")
                             .label("Hover me")
                             .tooltip("This is tooltip 3"),
+                    )
+                    .child(
+                        Button::new("btn-right")
+                            .label("Right side")
+                            .tooltip("This tooltip prefers the right side.")
+                            .tooltip_placement(Placement::Right),
                     ),
             )
             .child(

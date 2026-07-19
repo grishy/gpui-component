@@ -35,6 +35,21 @@ Button::new("save-btn")
     .tooltip("Save the current document")
 ```
 
+### Preferred Placement
+
+Buttons use automatic top-or-bottom placement by default. A button can prefer
+one of the four sides; the tooltip flips to the opposite side when the
+preferred side does not fit in the window.
+
+```rust
+use gpui_component::Placement;
+
+Button::new("sidebar-home")
+    .icon(IconName::Home)
+    .tooltip("Home")
+    .tooltip_placement(Placement::Right)
+```
+
 ### Tooltip with Action/Keybinding
 
 ```rust
@@ -190,6 +205,7 @@ Components with tooltip support typically provide these methods:
 | -------------------------------------------- | --------------------------------------- |
 | `tooltip(text)`                              | Add simple text tooltip                 |
 | `tooltip_with_action(text, action, context)` | Add tooltip with action keybinding      |
+| `tooltip_placement(placement)`               | Prefer a side, with opposite fallback   |
 | `tooltip(closure)`                           | Add custom tooltip with builder closure |
 
 ### Tooltip Styling
