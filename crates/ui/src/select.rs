@@ -488,7 +488,7 @@ where
 
     fn show_clean(&self) -> bool {
         if self.state.cleanable {
-            self.state.selection.first().is_some()
+            !self.state.selection.is_empty()
         } else {
             false
         }
